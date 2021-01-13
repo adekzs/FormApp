@@ -5,6 +5,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 
 import android.Manifest;
 import android.content.Intent;
@@ -12,8 +13,10 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
@@ -23,9 +26,16 @@ import android.widget.Toast;
 import com.adeks.formapp.model.User;
 import com.adeks.formapp.retrofit.FormService;
 import com.adeks.formapp.retrofit.RetrofitClientClass;
+import com.google.android.material.textfield.TextInputLayout;
+
+import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
 
 import okhttp3.MediaType;
 import okhttp3.MultipartBody;
@@ -40,29 +50,41 @@ public class MainActivity extends AppCompatActivity {
     public static final int REQUEST_CODE_STORAGE_PERMISSION = 1;
     public static final int REQUEST_CODE_SELECT_IMAGE = 2;
     private static final String TAG = "MainActivity";
+    public static final int CAMERA_PERM_CODE = 101;
+    public static final int CAMERA_REQ_CODE = 102;
+
     private ImageView mImageView;
     private File mSelectedFile;
     private User user;
+
+    TextInputLayout firstName, lastName, email, phone, pass, confPass, address, service, state, lga, description, price, avail, location, duration;
+    private String currentPhotoPath;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         mImageView = findViewById(R.id.imagev);
-        user = new User("Adeks","kays","09035016818","12345678","12345678","address","Mobile",
-                "Oyo", null, "lagelu", "john@gmail.com", "text","5000","1","Oyo state Nigeria","6");
-        findViewById(R.id.button).setOnClickListener(v -> {
-            if(ContextCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.READ_EXTERNAL_STORAGE)
-            != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(
-                        MainActivity.this,
-                        new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
-                        REQUEST_CODE_STORAGE_PERMISSION
-                );
-            } else {
-                selectImage();
-            }
+        getEachFieldId();
+//        user = new User("Adeks", "kays", "09035016818", "12345678", "12345678", "address", "Mobile",
+//                "Oyo", null, "lagelu", "john@gmail.com", "text", "5000", "1", "Oyo state Nigeria", "6");
+        mImageView.setOnClickListener(v -> {
+//            askStoragePermission();
+            askCameraPermission();
         });
+    }
+
+    private void askStoragePermission() {
+        if (ContextCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                    MainActivity.this,
+                    new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                    REQUEST_CODE_STORAGE_PERMISSION
+            );
+        } else {
+            selectImage();
+        }
     }
 
     @Override
@@ -73,7 +95,15 @@ public class MainActivity extends AppCompatActivity {
             if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 selectImage();
             } else {
-                Toast.makeText(this,"Permission denied",Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "Permission denied", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        if (requestCode == CAMERA_PERM_CODE && grantResults.length > 1) {
+            if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                dispatchTakePictureIntent();
+            } else {
+                Toast.makeText(this, "Permission denied", Toast.LENGTH_LONG).show();
             }
         }
     }
@@ -84,23 +114,117 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode == REQUEST_CODE_SELECT_IMAGE && resultCode == RESULT_OK) {
             if (data != null) {
                 Uri selectedImageUri = data.getData();
-                if (selectedImageUri != null){
+                if (selectedImageUri != null) {
                     try {
                         InputStream inputStream = getContentResolver().openInputStream(selectedImageUri);
                         Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
+                        bitmap = getResizedBitmap(bitmap, 200, 200);
                         mImageView.setImageBitmap(bitmap);
                         mSelectedFile = new File(getPathFromUri(selectedImageUri));
-                    }catch (Exception ex) {
-                        Toast.makeText(this,ex.getMessage(),Toast.LENGTH_LONG).show();
+                    } catch (Exception ex) {
+                        Toast.makeText(this, ex.getMessage(), Toast.LENGTH_LONG).show();
                     }
                 }
             }
+            return;
+        }
+
+        if (requestCode == CAMERA_REQ_CODE && resultCode == RESULT_OK) {
+//            if (data != null) {
+//                Uri selectedImageUri = data.getData();
+//                if (selectedImageUri != null) {
+//                    try {
+//                        InputStream inputStream = getContentResolver().openInputStream(selectedImageUri);
+//                        Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
+//                        bitmap = getResizedBitmap(bitmap, 200, 200);
+//                        mImageView.setImageBitmap(bitmap);
+//                        mSelectedFile = new File(getPathFromUri(selectedImageUri));
+//                    } catch (Exception ex) {
+//                        Toast.makeText(this, ex.getMessage(), Toast.LENGTH_LONG).show();
+//                    }
+//                }
+//            }
+            File f = new File(currentPhotoPath);
+            try {
+                InputStream inputStream = getContentResolver().openInputStream(Uri.fromFile(f));
+                Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
+                bitmap = getResizedBitmap(bitmap, 200, 200);
+                mImageView.setImageBitmap(bitmap);
+                mSelectedFile = f;
+            } catch (Exception ex) {
+                Toast.makeText(this, ex.getMessage(), Toast.LENGTH_LONG).show();
+            }
+//            mImageView.setImageURI(Uri.fromFile(f));
+//            mSelectedFile = f;
+        }
+
+
+    }
+
+    private File createImageFile() throws IOException {
+        // Create an image file name
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        String imageFileName = "JPEG_" + timeStamp + "_";
+        File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        File image = File.createTempFile(
+                imageFileName,  /* prefix */
+                ".jpg",         /* suffix */
+                storageDir      /* directory */
+        );
+
+        // Save a file: path for use with ACTION_VIEW intents
+        currentPhotoPath = image.getAbsolutePath();
+        return image;
+    }
+
+    private void dispatchTakePictureIntent() {
+        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        // Ensure that there's a camera activity to handle the intent
+        if (takePictureIntent.resolveActivity(getPackageManager()) != null) {
+            // Create the File where the photo should go
+            File photoFile = null;
+            try {
+                photoFile = createImageFile();
+            } catch (IOException ex) {
+                // Error occurred while creating the File
+            }
+            // Continue only if the File was successfully created
+            if (photoFile != null) {
+                Uri photoURI = FileProvider.getUriForFile(this,
+                        "com.example.android.fileprovider",
+                        photoFile);
+                takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
+                startActivityForResult(takePictureIntent, CAMERA_REQ_CODE);
+            }
         }
     }
+
+    private void askCameraPermission() {
+        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, CAMERA_PERM_CODE);
+        } else {
+            dispatchTakePictureIntent();
+        }
+    }
+
+
+    public static Bitmap getResizedBitmap(Bitmap bm, int newHeight, int newWidth) {
+        int width = bm.getWidth();
+        int height = bm.getHeight();
+        float scaleWidth = ((float) newWidth) / width;
+        float scaleHeight = ((float) newHeight) / height;
+        Matrix matrix = new Matrix();
+        // RESIZE THE BIT MAP
+        matrix.postScale(scaleWidth, scaleHeight);
+        // RECREATE THE NEW BITMAP
+        return Bitmap.createBitmap(bm, 0, 0, width, height,
+                matrix, false);
+    }
+
     private String getPathFromUri(Uri contentUri) {
         String filePath;
         Cursor cursor = getContentResolver().
-                query(contentUri,null,null,null,null);
+                query(contentUri, null, null, null, null);
         if (cursor == null) {
             filePath = contentUri.getPath();
         } else {
@@ -122,47 +246,184 @@ public class MainActivity extends AppCompatActivity {
 
     public void sendFormRequest(View view) {
         if (mSelectedFile == null) {
-            Toast.makeText(this,"You need to select a file",Toast.LENGTH_LONG).show();
-        }else {
+            Toast.makeText(this, "You need to select a file", Toast.LENGTH_LONG).show();
+        } else if (!validateAllFields()) {
+            Toast.makeText(this, "Wrong input", Toast.LENGTH_SHORT).show();
+        } else {
+            getEachTextVal();
             user.setFile(mSelectedFile);
+
             Retrofit retrofit = RetrofitClientClass.getRetrofitInstance();
             FormService form = retrofit.create(FormService.class);
 
             MultipartBody.Builder builder = new MultipartBody.Builder();
             builder.setType(MultipartBody.FORM);
-            builder.addFormDataPart("address",user.getAddress());
-            builder.addFormDataPart("availability",user.getAvailability());
-            builder.addFormDataPart("description",user.getDescription());
-            builder.addFormDataPart("duration",user.getDuration());
-            builder.addFormDataPart("email",user.getEmail());
-            builder.addFormDataPart("first_name",user.getFirst_name());
-            RequestBody requestBody = RequestBody.create(mSelectedFile,MediaType.parse("multipart/form-data"));
-            builder.addFormDataPart("image",mSelectedFile.getName(),requestBody);
-            builder.addFormDataPart("last_name",user.getLast_Name());
-            builder.addFormDataPart("lga",user.getLga());
-            builder.addFormDataPart("location",user.getLocation());
-            builder.addFormDataPart("password",user.getPassword());
-            builder.addFormDataPart("password_confirmation",user.getPassword_confirmation());
-            builder.addFormDataPart("phone",user.getPhone());
-            builder.addFormDataPart("price",user.getPrice());
-            builder.addFormDataPart("service",user.getService());
-            builder.addFormDataPart("state",user.getState());
+            builder.addFormDataPart("address", user.getAddress());
+            builder.addFormDataPart("availability", user.getAvailability());
+            builder.addFormDataPart("description", user.getDescription());
+            builder.addFormDataPart("duration", user.getDuration());
+            builder.addFormDataPart("email", user.getEmail());
+            builder.addFormDataPart("first_name", user.getFirst_name());
+            RequestBody requestBody = RequestBody.create(mSelectedFile, MediaType.parse("multipart/form-data"));
+            builder.addFormDataPart("image", mSelectedFile.getName(), requestBody);
+            builder.addFormDataPart("last_name", user.getLast_Name());
+            builder.addFormDataPart("lga", user.getLga());
+            builder.addFormDataPart("location", user.getLocation());
+            builder.addFormDataPart("password", user.getPassword());
+            builder.addFormDataPart("password_confirmation", user.getPassword_confirmation());
+            builder.addFormDataPart("phone", user.getPhone());
+            builder.addFormDataPart("price", user.getPrice());
+            builder.addFormDataPart("service", user.getService());
+            builder.addFormDataPart("state", user.getState());
             RequestBody finalRb = builder.build();
 
-//        Call<ResponseBody> upload = form.createUser(RequestBody.create(String.valueOf(user),MediaType.get("application/json")),MultipartBody.Part.createFormData("image",file.getName(), RequestBody.create(file,MediaType.parse("image"))));
+
             Call<ResponseBody> upload = form.createUser(finalRb);
             upload.enqueue(new Callback<ResponseBody>() {
                 @Override
                 public void onResponse(Call<ResponseBody> call, Response<ResponseBody> response) {
-                    Log.d(TAG, "onResponse: SUCCESSFULL"+response.body());
+                    Log.d(TAG, "onResponse: SUCCESSFUL" + response.body());
                 }
 
                 @Override
                 public void onFailure(Call<ResponseBody> call, Throwable t) {
-                    Log.d(TAG, "onFailure: FAILED"+t.toString());
+                    Log.d(TAG, "onFailure: FAILED" + t.toString());
                 }
             });
         }
 
+    }
+
+    private boolean validateAllFields() {
+        ArrayList<TextInputLayout> list = new ArrayList<>();
+        list.add(firstName);
+        list.add(lastName);
+        list.add(address);
+        list.add(service);
+        list.add(state);
+        list.add(lga);
+        list.add(description);
+        list.add(price);
+        list.add(avail);
+        list.add(duration);
+        list.add(email);
+        list.add(phone);
+        list.add(pass);
+        list.add(confPass);
+        list.add(location);
+        return checkRemainingFields(list) && validateEmail() && validatePass()
+                && validateConfPass() && validatePhone();
+    }
+
+    private Boolean validatePhone() {
+        String val = getString(phone);
+        //remove leading 234 || +234
+        if (val.startsWith("234")) {
+            if (val.length() != 13) {
+                phone.setError("Incorrect number input");
+                return false;
+            }
+        } else if (val.startsWith("0")) {
+            if (val.length() != 11) {
+                phone.setError("Incorrect number input");
+                return false;
+            }
+        }
+        phone.setError(null);
+        phone.setErrorEnabled(false);
+        return true;
+    }
+
+    private Boolean validatePass() {
+        String val = getString(pass);
+
+        if (val.isEmpty()) {
+            pass.setError("Field Cannot be Empty");
+            return false;
+        } else {
+            pass.setError(null);
+            pass.setErrorEnabled(false);
+            return true;
+        }
+    }
+
+    private Boolean validateConfPass() {
+        String val = getString(confPass);
+
+        if (val.isEmpty()) {
+            confPass.setError("Field Cannot be Empty");
+            return false;
+        } else if (!val.equals(getString(pass))) {
+            confPass.setError("Password and Confirmation password must be equal");
+            return false;
+        } else {
+            confPass.setError(null);
+            confPass.setErrorEnabled(false);
+            return true;
+        }
+    }
+
+    private Boolean validateEmail() {
+        String val = getString(email);
+        String regx = "(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"" +
+                "(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*" +
+                "\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:25[0-5]|2[0-4][0-9]|" +
+                "[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\" +
+                "x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])";
+
+        if (val.isEmpty()) {
+            email.setError("Field Cannot be Empty");
+            return false;
+        } else if (!val.matches(regx)) {
+            email.setError("Invalid email Address");
+            return false;
+        } else {
+            email.setError(null);
+            email.setErrorEnabled(false);
+            return true;
+        }
+    }
+
+    private boolean checkRemainingFields(@NotNull ArrayList<TextInputLayout> layouts) {
+        boolean isError = false;
+        for (TextInputLayout layout : layouts) {
+            String val = getString(layout);
+            if (val.isEmpty()) {
+                layout.setError("Field Cannot be Empty");
+                isError = true;
+            } else {
+                layout.setError(null);
+                layout.setErrorEnabled(false);
+            }
+        }
+        return !isError;
+    }
+
+    private void getEachTextVal() {
+        user = new User(getString(firstName), getString(lastName), getString(phone), getString(pass), getString(confPass), getString(address),
+                getString(service), getString(state), null, getString(lga), getString(email), getString(description), getString(price),
+                getString(avail), getString(location), getString(duration));
+    }
+
+    private String getString(@NotNull TextInputLayout input) {
+        return input.getEditText().getText().toString();
+    }
+
+    private void getEachFieldId() {
+        firstName = findViewById(R.id.first_name);
+        lastName = findViewById(R.id.last_name);
+        phone = findViewById(R.id.phone);
+        email = findViewById(R.id.email);
+        pass = findViewById(R.id.password);
+        confPass = findViewById(R.id.confirm_password);
+        address = findViewById(R.id.address);
+        service = findViewById(R.id.service);
+        state = findViewById(R.id.state);
+        lga = findViewById(R.id.lga);
+        description = findViewById(R.id.description);
+        price = findViewById(R.id.price);
+        avail = findViewById(R.id.availablity);
+        location = findViewById(R.id.location);
+        duration = findViewById(R.id.duration);
     }
 }
