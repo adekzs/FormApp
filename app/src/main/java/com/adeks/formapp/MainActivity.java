@@ -21,16 +21,22 @@ import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import com.adeks.formapp.model.User;
 import com.adeks.formapp.retrofit.FormService;
 import com.adeks.formapp.retrofit.RetrofitClientClass;
 import com.google.android.material.textfield.TextInputLayout;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
@@ -46,17 +52,19 @@ import retrofit2.Callback;
 import retrofit2.Response;
 import retrofit2.Retrofit;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements  ProcessResult{
     public static final int REQUEST_CODE_STORAGE_PERMISSION = 1;
     public static final int REQUEST_CODE_SELECT_IMAGE = 2;
     private static final String TAG = "MainActivity";
     public static final int CAMERA_PERM_CODE = 101;
     public static final int CAMERA_REQ_CODE = 102;
+    public static final int WRITE_REQUEST_CODE = 104;
 
     private ImageView mImageView;
     private File mSelectedFile;
     private User user;
 
+    private ProgressBar mProgressBar;
     TextInputLayout firstName, lastName, email, phone, pass, confPass, address, service, state, lga, description, price, avail, location, duration;
     private String currentPhotoPath;
 
@@ -66,8 +74,8 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         mImageView = findViewById(R.id.imagev);
         getEachFieldId();
-//        user = new User("Adeks", "kays", "09035016818", "12345678", "12345678", "address", "Mobile",
-//                "Oyo", null, "lagelu", "john@gmail.com", "text", "5000", "1", "Oyo state Nigeria", "6");
+        mProgressBar = findViewById(R.id.progressBar);
+
         mImageView.setOnClickListener(v -> {
 //            askStoragePermission();
             askCameraPermission();
@@ -91,7 +99,7 @@ public class MainActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
-        if (requestCode == REQUEST_CODE_STORAGE_PERMISSION && grantResults.length > 1) {
+        if (requestCode == REQUEST_CODE_STORAGE_PERMISSION && grantResults.length >= 1) {
             if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 selectImage();
             } else {
@@ -99,9 +107,17 @@ public class MainActivity extends AppCompatActivity {
             }
             return;
         }
-        if (requestCode == CAMERA_PERM_CODE && grantResults.length > 1) {
+        if (requestCode == CAMERA_PERM_CODE && grantResults.length >= 1) {
             if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 dispatchTakePictureIntent();
+            } else {
+                Toast.makeText(this, "Permission denied", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        if (requestCode == WRITE_REQUEST_CODE && grantResults.length >= 1) {
+            if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                mSelectedFile = saveBitmapToFile(mSelectedFile);
             } else {
                 Toast.makeText(this, "Permission denied", Toast.LENGTH_LONG).show();
             }
@@ -121,8 +137,13 @@ public class MainActivity extends AppCompatActivity {
                         bitmap = getResizedBitmap(bitmap, 200, 200);
                         mImageView.setImageBitmap(bitmap);
                         mSelectedFile = new File(getPathFromUri(selectedImageUri));
+                        Log.d(TAG, "onActivityResult: FILE SIZE " + mSelectedFile.length());
+                        mSelectedFile = saveBitmapToFile(mSelectedFile);
+                        Log.d(TAG, "onActivityResult: FILE SIZE  2 " + mSelectedFile.length());
+
                     } catch (Exception ex) {
                         Toast.makeText(this, ex.getMessage(), Toast.LENGTH_LONG).show();
+                        Log.e(TAG, "onActivityResult: Error",ex.fillInStackTrace() );
                     }
                 }
             }
@@ -130,35 +151,19 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (requestCode == CAMERA_REQ_CODE && resultCode == RESULT_OK) {
-//            if (data != null) {
-//                Uri selectedImageUri = data.getData();
-//                if (selectedImageUri != null) {
-//                    try {
-//                        InputStream inputStream = getContentResolver().openInputStream(selectedImageUri);
-//                        Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
-//                        bitmap = getResizedBitmap(bitmap, 200, 200);
-//                        mImageView.setImageBitmap(bitmap);
-//                        mSelectedFile = new File(getPathFromUri(selectedImageUri));
-//                    } catch (Exception ex) {
-//                        Toast.makeText(this, ex.getMessage(), Toast.LENGTH_LONG).show();
-//                    }
-//                }
-//            }
             File f = new File(currentPhotoPath);
+            mSelectedFile = saveBitmapToFile(f);
             try {
-                InputStream inputStream = getContentResolver().openInputStream(Uri.fromFile(f));
+                InputStream inputStream = getContentResolver().openInputStream(Uri.fromFile(mSelectedFile));
                 Bitmap bitmap = BitmapFactory.decodeStream(inputStream);
-                bitmap = getResizedBitmap(bitmap, 200, 200);
+//                bitmap = getResizedBitmap(bitmap, 200, 200);
                 mImageView.setImageBitmap(bitmap);
-                mSelectedFile = f;
             } catch (Exception ex) {
                 Toast.makeText(this, ex.getMessage(), Toast.LENGTH_LONG).show();
             }
 //            mImageView.setImageURI(Uri.fromFile(f));
 //            mSelectedFile = f;
         }
-
-
     }
 
     private File createImageFile() throws IOException {
@@ -219,6 +224,7 @@ public class MainActivity extends AppCompatActivity {
         // RECREATE THE NEW BITMAP
         return Bitmap.createBitmap(bm, 0, 0, width, height,
                 matrix, false);
+
     }
 
     private String getPathFromUri(Uri contentUri) {
@@ -252,46 +258,158 @@ public class MainActivity extends AppCompatActivity {
         } else {
             getEachTextVal();
             user.setFile(mSelectedFile);
+            performSendRequest(user,this);
+        }
 
-            Retrofit retrofit = RetrofitClientClass.getRetrofitInstance();
-            FormService form = retrofit.create(FormService.class);
+    }
 
-            MultipartBody.Builder builder = new MultipartBody.Builder();
-            builder.setType(MultipartBody.FORM);
-            builder.addFormDataPart("address", user.getAddress());
-            builder.addFormDataPart("availability", user.getAvailability());
-            builder.addFormDataPart("description", user.getDescription());
-            builder.addFormDataPart("duration", user.getDuration());
-            builder.addFormDataPart("email", user.getEmail());
-            builder.addFormDataPart("first_name", user.getFirst_name());
-            RequestBody requestBody = RequestBody.create(mSelectedFile, MediaType.parse("multipart/form-data"));
-            builder.addFormDataPart("image", mSelectedFile.getName(), requestBody);
-            builder.addFormDataPart("last_name", user.getLast_Name());
-            builder.addFormDataPart("lga", user.getLga());
-            builder.addFormDataPart("location", user.getLocation());
-            builder.addFormDataPart("password", user.getPassword());
-            builder.addFormDataPart("password_confirmation", user.getPassword_confirmation());
-            builder.addFormDataPart("phone", user.getPhone());
-            builder.addFormDataPart("price", user.getPrice());
-            builder.addFormDataPart("service", user.getService());
-            builder.addFormDataPart("state", user.getState());
-            RequestBody finalRb = builder.build();
+    private void performSendRequest(User user, ProcessResult processResult) {
+        Retrofit retrofit = RetrofitClientClass.getRetrofitInstance();
+        FormService form = retrofit.create(FormService.class);
+
+        MultipartBody.Builder builder = new MultipartBody.Builder();
+        builder.setType(MultipartBody.FORM);
+        builder.addFormDataPart("address", user.getAddress());
+        builder.addFormDataPart("availability", user.getAvailability());
+        builder.addFormDataPart("description", user.getDescription());
+        builder.addFormDataPart("duration", user.getDuration());
+        builder.addFormDataPart("email", user.getEmail());
+        builder.addFormDataPart("first_name", user.getFirst_name());
+        RequestBody requestBody = RequestBody.create(mSelectedFile, MediaType.parse("multipart/form-data"));
+        builder.addFormDataPart("image", mSelectedFile.getName(), requestBody);
+        builder.addFormDataPart("last_name", user.getLast_Name());
+        builder.addFormDataPart("lga", user.getLga());
+        builder.addFormDataPart("location", user.getLocation());
+        builder.addFormDataPart("password", user.getPassword());
+        builder.addFormDataPart("password_confirmation", user.getPassword_confirmation());
+        builder.addFormDataPart("phone", user.getPhone());
+        builder.addFormDataPart("price", user.getPrice());
+        builder.addFormDataPart("service", user.getService());
+        builder.addFormDataPart("state", user.getState());
+        RequestBody finalRb = builder.build();
 
 
-            Call<ResponseBody> upload = form.createUser(finalRb);
-            upload.enqueue(new Callback<ResponseBody>() {
-                @Override
-                public void onResponse(Call<ResponseBody> call, Response<ResponseBody> response) {
+        Call<ResponseBody> upload = form.createUser(finalRb);
+        upload.enqueue(new Callback<ResponseBody>() {
+            @Override
+            public void onResponse(Call<ResponseBody> call, Response<ResponseBody> response) {
+                if (response.isSuccessful()) {
+                    if (response.code() == 200) {
+                        processResult.onProcessCompleted();
+                    }
+                }else  {
+                        if (response.errorBody() != null) {
+                            try {
+                                String errorMessage = response.errorBody().string();
+                                JsonParser parser = new JsonParser();
+                                Object obj = parser.parse(errorMessage);
+                                JsonObject message = (JsonObject) obj;
+                                JsonObject error = message.getAsJsonObject("errors");
+                                Log.d(TAG, "onResponse: Errors av" + error.toString());
+                                outputErrorOnEachField(error);
+                                Log.d(TAG, "onResponse: Message" + errorMessage);
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        processResult.onProcessFailed("Error");
+                    }
                     Log.d(TAG, "onResponse: SUCCESSFUL" + response.body());
                 }
 
-                @Override
-                public void onFailure(Call<ResponseBody> call, Throwable t) {
-                    Log.d(TAG, "onFailure: FAILED" + t.toString());
-                }
-            });
-        }
 
+            @Override
+            public void onFailure(Call<ResponseBody> call, Throwable t) {
+                processResult.onProcessFailed(t.toString());
+                Log.d(TAG, "onFailure: FAILED" + t.toString());
+            }
+        });
+        showLoadingIcon();
+    }
+    private  void checkEachField(JsonObject error, String fieldName, TextInputLayout layout){
+        if (error.has(fieldName)) {
+            StringBuilder error_m = new StringBuilder();
+            JsonArray array = error.getAsJsonArray(fieldName);
+            for (int i = 0; i < array.size(); i++) {
+                error_m.append(array.get(i).toString()).append(" ");
+            }
+            layout.setError(error_m.toString());
+        }
+    }
+    private void outputErrorOnEachField(JsonObject error) {
+       checkEachField(error,"first_name",firstName);
+        checkEachField(error,"last_name",lastName);
+        checkEachField(error,"phone",phone);
+        checkEachField(error,"email",email);
+        checkEachField(error,"password",pass);
+        checkEachField(error,"password_confirmation",confPass);
+        checkEachField(error,"address",address);
+        checkEachField(error,"service",service);
+        checkEachField(error,"state",state);
+        checkEachField(error,"lga",lga);
+        checkEachField(error,"description",description);
+        checkEachField(error,"price",price);
+        checkEachField(error,"availability",avail);
+        checkEachField(error,"location",location);
+        checkEachField(error,"duration",duration);
+
+        if (error.has("image")) {
+            StringBuilder error_m = new StringBuilder();
+            JsonArray array = error.getAsJsonArray("image");
+            for (int i = 0; i < array.size(); i++) {
+                error_m.append(array.get(i).toString()).append(" ");
+            }
+            Toast.makeText(this, error_m.toString(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    public File saveBitmapToFile(File file){
+        try {
+            // BitmapFactory options to downsize the image
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            o.inSampleSize = 6;
+            // factor of downsizing the image
+
+            FileInputStream inputStream = new FileInputStream(file);
+            //Bitmap selectedBitmap = null;
+            BitmapFactory.decodeStream(inputStream, null, o);
+            inputStream.close();
+
+            // The new size we want to scale to
+            final int REQUIRED_SIZE=75;
+
+            // Find the correct scale value. It should be the power of 2.
+            int scale = 1;
+            while(o.outWidth / scale / 2 >= REQUIRED_SIZE &&
+                    o.outHeight / scale / 2 >= REQUIRED_SIZE) {
+                scale *= 2;
+            }
+
+            BitmapFactory.Options o2 = new BitmapFactory.Options();
+            o2.inSampleSize = scale;
+            inputStream = new FileInputStream(file);
+
+            Bitmap selectedBitmap = BitmapFactory.decodeStream(inputStream, null, o2);
+            inputStream.close();
+
+            // here i override the original image file
+            file.createNewFile();
+            FileOutputStream outputStream = new FileOutputStream(file);
+            if ( ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+                selectedBitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream);
+            } else {
+                ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, WRITE_REQUEST_CODE);
+
+            }
+            return file;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void showLoadingIcon() {
+        mProgressBar.setVisibility(View.VISIBLE);
     }
 
     private boolean validateAllFields() {
@@ -425,5 +543,21 @@ public class MainActivity extends AppCompatActivity {
         avail = findViewById(R.id.availablity);
         location = findViewById(R.id.location);
         duration = findViewById(R.id.duration);
+    }
+
+
+    @Override
+    public void onProcessCompleted() {
+        removeLoadingIcon();
+    }
+
+    private void removeLoadingIcon() {
+        mProgressBar.setVisibility(View.INVISIBLE);
+    }
+
+    @Override
+    public void onProcessFailed(String t) {
+        removeLoadingIcon();
+        Toast.makeText(this, "Connection Timed out", Toast.LENGTH_SHORT).show();
     }
 }
