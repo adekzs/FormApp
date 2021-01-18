@@ -1,5 +1,7 @@
 package com.adeks.formapp.retrofit;
 
+import com.adeks.formapp.model.ResponseResult;
+
 import okhttp3.RequestBody;
 import okhttp3.ResponseBody;
 import retrofit2.Call;
@@ -20,6 +22,6 @@ public interface FormService {
             "Accept: application/json "
     })
     @POST("api/v1/worker/register")
-    Call<ResponseBody> createUser(@Body RequestBody user);
+    Call<ResponseResult> createUser(@Body RequestBody user);
 
 }

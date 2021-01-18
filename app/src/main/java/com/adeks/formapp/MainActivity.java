@@ -24,6 +24,7 @@ import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import com.adeks.formapp.model.ResponseResult;
 import com.adeks.formapp.model.User;
 import com.adeks.formapp.retrofit.FormService;
 import com.adeks.formapp.retrofit.RetrofitClientClass;
@@ -289,12 +290,16 @@ public class MainActivity extends AppCompatActivity implements  ProcessResult{
         RequestBody finalRb = builder.build();
 
 
-        Call<ResponseBody> upload = form.createUser(finalRb);
-        upload.enqueue(new Callback<ResponseBody>() {
+        Call<ResponseResult> upload = form.createUser(finalRb);
+        upload.enqueue(new Callback<ResponseResult>() {
             @Override
-            public void onResponse(Call<ResponseBody> call, Response<ResponseBody> response) {
+            public void onResponse(Call<ResponseResult> call, Response<ResponseResult> response) {
                 if (response.isSuccessful()) {
                     if (response.code() == 200) {
+                        ResponseResult resp = response.body();
+                        String token = resp.getToken();
+                        String workerId = resp.getWorker().getWorkerId();
+                        Log.d(TAG, "onResponse: TOKEN:" + token +"WORKER_ID: "+ workerId);
                         processResult.onProcessCompleted();
                     }
                 }else  {
@@ -319,7 +324,7 @@ public class MainActivity extends AppCompatActivity implements  ProcessResult{
 
 
             @Override
-            public void onFailure(Call<ResponseBody> call, Throwable t) {
+            public void onFailure(Call<ResponseResult> call, Throwable t) {
                 processResult.onProcessFailed(t.toString());
                 Log.d(TAG, "onFailure: FAILED" + t.toString());
             }
